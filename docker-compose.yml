@@ -1,0 +1,16 @@
+# Superseded by ../docker-compose.yml (the whole stack; see ../RUNNING.md). Kept for anyone still
+# running infra from server/. Do not run both: they publish the same host ports.
+#
+# Local Mongo + Redis for development: `docker compose up -d` from server/.
+# Host ports can be moved if something else already uses them (compose reads .env):
+#   ET_MONGO_PORT=27018  ET_REDIS_PORT=6381  — then match MONGODB_URI / REDIS_URL.
+services:
+  mongo:
+    image: mongo:7
+    ports: ["${ET_MONGO_PORT:-27017}:27017"]
+    volumes: [mongo-data:/data/db]
+  redis:
+    image: redis:7-alpine
+    ports: ["${ET_REDIS_PORT:-6379}:6379"]
+volumes:
+  mongo-data:

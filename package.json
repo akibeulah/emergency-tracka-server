@@ -1,0 +1,86 @@
+{
+  "name": "emergency-tracka-server",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Emergency Tracka API: facilities, staff, bed capacity, referrals, payments, blood (flagged off).",
+  "license": "UNLICENSED",
+  "scripts": {
+    "build": "nest build",
+    "start": "nest start",
+    "start:dev": "nest start --watch",
+    "start:prod": "node dist/main",
+    "seed": "ts-node -r tsconfig-paths/register src/seed/seed.ts",
+    "seed:reset": "ts-node -r tsconfig-paths/register src/seed/seed.ts --reset",
+    "listen": "ts-node scripts/socket-listen.ts",
+    "demo": "ts-node scripts/demo-referral-flow.ts",
+    "smoke": "ts-node scripts/smoke-hero-flow.ts",
+    "test": "jest",
+    "test:watch": "jest --watch",
+    "test:cov": "jest --coverage",
+    "typecheck": "tsc --noEmit -p tsconfig.json"
+  },
+  "jest": {
+    "moduleFileExtensions": [
+      "js",
+      "json",
+      "ts"
+    ],
+    "rootDir": "src",
+    "testRegex": "[.]spec[.]ts$",
+    "transform": {
+      "^.+[.](t|j)s$": "ts-jest"
+    },
+    "moduleNameMapper": {
+      "^src/(.*)$": "<rootDir>/$1"
+    },
+    "collectCoverageFrom": [
+      "**/*.(t|j)s"
+    ],
+    "coverageDirectory": "../coverage",
+    "testEnvironment": "node"
+  },
+  "dependencies": {
+    "@nestjs/axios": "^4.0.1",
+    "@nestjs/bullmq": "^11.0.5",
+    "@nestjs/common": "^11.2.8",
+    "@nestjs/config": "^4.0.4",
+    "@nestjs/core": "^11.2.8",
+    "@nestjs/event-emitter": "^3.1.0",
+    "@nestjs/jwt": "^11.0.2",
+    "@nestjs/mongoose": "^11.0.4",
+    "@nestjs/passport": "^11.0.5",
+    "@nestjs/platform-express": "^11.2.8",
+    "@nestjs/platform-socket.io": "^11.2.8",
+    "@nestjs/websockets": "^11.2.8",
+    "axios": "^1.21.0",
+    "bullmq": "^5.81.5",
+    "class-transformer": "^0.5.1",
+    "class-validator": "^0.14.4",
+    "dotenv": "^16.6.1",
+    "ioredis": "^5.11.1",
+    "joi": "^17.13.8",
+    "mongoose": "^8.24.7",
+    "nodemailer": "^6.10.1",
+    "passport": "^0.7.0",
+    "passport-jwt": "^4.0.1",
+    "reflect-metadata": "^0.2.2",
+    "rxjs": "^7.8.2",
+    "socket.io": "^4.8.4"
+  },
+  "devDependencies": {
+    "@nestjs/cli": "^11.0.24",
+    "@nestjs/schematics": "^11.1.0",
+    "@nestjs/testing": "^11.2.8",
+    "@types/express": "^5.0.6",
+    "@types/jest": "^29.5.14",
+    "@types/node": "^22.20.5",
+    "@types/nodemailer": "^6.4.24",
+    "@types/passport-jwt": "^4.0.1",
+    "jest": "^29.7.0",
+    "socket.io-client": "^4.8.4",
+    "ts-jest": "^29.4.15",
+    "ts-node": "^10.9.2",
+    "tsconfig-paths": "^4.2.0",
+    "typescript": "~5.7"
+  }
+}
