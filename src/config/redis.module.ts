@@ -15,6 +15,8 @@ export function redisConnectionOptions(url: string) {
     password: u.password ? decodeURIComponent(u.password) : undefined,
     db: u.pathname && u.pathname !== '/' ? Number(u.pathname.slice(1)) : 0,
     tls: u.protocol === 'rediss:' ? {} : undefined,
+    // 0 = IPv4 or IPv6. Private networks such as Railway's can resolve to IPv6 only.
+    family: 0,
     // BullMQ requires this to be null for its blocking connections.
     maxRetriesPerRequest: null,
   };
