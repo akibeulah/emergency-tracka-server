@@ -3,6 +3,7 @@
  *
  *   npm run seed          upsert (safe to re-run)
  *   npm run seed:reset    drop the database first
+ *   node dist/seed/seed.js --if-empty   deploys: seed only a database with no facilities
  *
  * EVERY facility here is fictional and named "(example)". Never seed a real
  * facility's name, capability or availability (CLAUDE.md rules).
@@ -189,6 +190,13 @@ async function main() {
   const rosters = mongoose.model(DutyRoster.name, DutyRosterSchema) as unknown as Model<DutyRoster>;
   const ambulances = mongoose.model(Ambulance.name, AmbulanceSchema) as unknown as Model<Ambulance>;
   await Promise.all([facilities, counters, users, beds, rosters, ambulances].map((m) => m.init()));
+
+  // --if-empty: for deploys. Seeds a fresh database once and never touches one that has data.
+  if (process.argv.includes('--if-empty') && (await facilities.estimatedDocumentCount()) > 0) {
+    console.log('database already has facilities; seed skipped (--if-empty)');
+    await mongoose.disconnect();
+    return;
+  }
 
   const now = new Date();
   const logins: string[][] = [];

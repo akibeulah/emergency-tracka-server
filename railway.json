@@ -5,6 +5,9 @@
     "buildCommand": "npm run build"
   },
   "deploy": {
+    "preDeployCommand": [
+      "node dist/seed/seed.js --if-empty"
+    ],
     "startCommand": "node dist/main",
     "healthcheckPath": "/api/health",
     "healthcheckTimeout": 120,
