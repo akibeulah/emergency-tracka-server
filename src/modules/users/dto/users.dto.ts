@@ -33,11 +33,43 @@ export class InviteStaffDto {
   @Matches(/^\+\d{10,15}$/, { message: 'phone must be in international format, e.g. +2348012345678' })
   phone: string;
 
+  /** MDCN registration number. Optional for now. */
+  @IsOptional()
+  @IsString()
+  @MaxLength(30)
+  mdcnNumber?: string;
+
   /** Defaults to the role's permission set when left out. */
   @IsOptional()
   @IsArray()
   @IsIn(PERMISSIONS, { each: true })
   permissions?: Permission[];
+}
+
+/** What a facility admin may change on a staff record after the invite. */
+export class UpdateStaffDto {
+  @IsOptional()
+  @IsString()
+  @MaxLength(120)
+  name?: string;
+
+  @IsOptional()
+  @IsString()
+  @MaxLength(30)
+  mdcnNumber?: string;
+}
+
+/** What anyone may change on their own account. */
+export class UpdateOwnProfileDto {
+  @IsOptional()
+  @IsString()
+  @MaxLength(120)
+  name?: string;
+
+  @IsOptional()
+  @IsString()
+  @MaxLength(30)
+  mdcnNumber?: string;
 }
 
 export class SetPermissionsDto {

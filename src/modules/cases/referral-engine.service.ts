@@ -27,6 +27,7 @@ import { BloodStock, BloodStockDocument } from '../blood/schemas/blood.schemas';
 import { CapacityService } from '../capacity/capacity.service';
 import { BedCategory, BedCategoryDocument } from '../capacity/schemas/bed-category.schema';
 import { Facility, FacilityDocument } from '../facilities/schemas/facility.schema';
+import { fareFor, fareTable, roadKm } from '../transport/fares';
 import { Actor, CaseJournal } from './case-journal.service';
 import {
   CandidateFacility,
@@ -76,12 +77,12 @@ export class ReferralEngine {
 
   // ─── Matching ────────────────────────────────────────────────────────────
 
-  async rank(c: Pick<Case, 'senderFacility' | 'brief' | 'routing'>): Promise<MatchResult> {
+  async rank(c: Pick<Case, 'senderFacility' | 'brief' | 'routing'> & Partial<Pick<Case, 'transport'>>): Promise<MatchResult> {
     const [candidates, sender] = await Promise.all([
       this.loadCandidates(),
       this.facilities.findOne({ facilityCode: c.senderFacility }, { location: 1 }).lean(),
     ]);
-    return matchFacilities({
+    const result = matchFacilities({
       requirements: c.brief.requirements,
       origin: sender?.location,
       candidates,
@@ -89,11 +90,24 @@ export class ReferralEngine {
       now: new Date(),
       bloodEnabled: isFeatureOn(this.config, 'blood'),
     });
+    if (c.transport?.needed) {
+      const table = fareTable(this.config.get('AMBULANCE_FARES_JSON', { infer: true }));
+      for (const r of result.ranked) {
+        if (r.distanceKm !== null) r.ambulanceFare = fareFor(table, c.transport.vehicleClass, roadKm(r.distanceKm));
+      }
+    }
+    return result;
   }
 
   private async loadCandidates(): Promise<CandidateFacility[]> {
     const facilities = await this.facilities
-      .find({ status: 'verified', type: { $in: ['hospital', 'clinic'] }, facilityCode: { $exists: true } })
+      // A facility that opted out of referrals is never considered.
+      .find({
+        status: 'verified',
+        type: { $in: ['hospital', 'clinic'] },
+        facilityCode: { $exists: true },
+        'settings.acceptReferrals': { $ne: false },
+      })
       .lean();
     const codes = facilities.map((f) => f.facilityCode!);
     const beds = await this.beds.find({ facilityCode: { $in: codes } }).lean();
@@ -107,6 +121,7 @@ export class ReferralEngine {
       location: f.location,
       reliabilityBadge: f.reliability?.badge,
       dutyPhone: f.dutyPhone,
+      level: f.level,
       oxygen: f.liveStatus?.oxygen
         ? { state: f.liveStatus.oxygen.state, updatedAt: f.liveStatus.oxygen.updatedAt }
         : undefined,
@@ -303,10 +318,13 @@ export class ReferralEngine {
    * A receiving facility says yes. Staff with `referral.finalApprove` award
    * the case outright; anyone else (a triage nurse) holds it for a Matron (4-11).
    */
-  async accept(offerId: string, actor: NonNullable<Actor>, canFinalApprove: boolean) {
+  async accept(offerId: string, actor: NonNullable<Actor>, canFinalApprove: boolean, ambulanceAvailable = false) {
     const offer = await this.offers.findOne({ _id: offerId, targetFacility: actor.facilityCode });
     if (!offer) throw new NotFoundException('No such referral request for your facility.');
     if (offer.status !== 'offered') throw new ConflictException(closedOfferMessage(offer.status));
+    // Kept on the offer so a Matron's later confirmation carries the same answer.
+    await this.offers.updateOne({ _id: offer._id, status: 'offered' }, { $set: { ambulanceAvailable } });
+    offer.ambulanceAvailable = ambulanceAvailable;
     return canFinalApprove ? this.award(offer, actor, false) : this.requestApproval(offer, actor);
   }
 
@@ -384,6 +402,7 @@ export class ReferralEngine {
       caseNumber: won.caseNumber,
       acceptedBy: offer.targetFacility,
       offerId: String(offer._id),
+      ambulanceAvailable: offer.ambulanceAvailable === true,
     });
     return this.cases.findById(won._id).lean();
   }

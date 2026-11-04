@@ -13,7 +13,9 @@ import { DEFAULT_ROLE_PERMISSIONS, Permission, PLATFORM_FACILITY_CODE, PUBLIC_FA
 import { BedCategory, BedCategoryName, BedCategorySchema } from '../modules/capacity/schemas/bed-category.schema';
 import { displayCode, nextFacilityCode } from '../modules/facilities/facility-code';
 import { Counter, CounterSchema } from '../modules/facilities/schemas/counter.schema';
-import { Facility, FacilitySchema, FacilityType, OxygenState, SpecialistAvailability } from '../modules/facilities/schemas/facility.schema';
+import { CareLevel, Facility, FacilitySchema, FacilityType, OxygenState, SpecialistAvailability } from '../modules/facilities/schemas/facility.schema';
+import { VehicleClass } from '../modules/transport/fares';
+import { Ambulance, AmbulanceSchema } from '../modules/transport/schemas/ambulance.schema';
 import { lagosWeekStart } from '../modules/users/roster';
 import { DutyRoster, DutyRosterSchema } from '../modules/users/schemas/duty-roster.schema';
 import { User, UserSchema } from '../modules/users/schemas/user.schema';
@@ -38,6 +40,9 @@ interface SeedFacility {
   ownership: 'general' | 'private' | 'mission' | 'other';
   location: { lat: number; lng: number };
   verified: boolean;
+  level?: CareLevel;
+  /** Ambulances: [label, class, status]. maxAmbulances is set to fit them plus one. */
+  ambulances?: [string, VehicleClass, 'available' | 'offline'][];
   oxygen?: OxygenState;
   specialists?: [string, SpecialistAvailability][];
   /** [max, threshold, occupied] */
@@ -54,6 +59,8 @@ const FACILITIES: SeedFacility[] = [
     ownership: 'general',
     location: { lat: 6.6018, lng: 3.3515 },
     verified: true,
+    level: 'secondary',
+    ambulances: [['LAG-A01 (example)', 'regular', 'available'], ['LAG-A02 (example)', 'ac', 'offline']],
     oxygen: 'available',
     specialists: [['general surgery', 'on_site'], ['obstetrics', 'on_site']],
     beds: { icu: [6, 2, 6], hdu: [8, 2, 5], ae: [20, 5, 18], paeds: [10, 3, 4], maternity: [12, 3, 9] },
@@ -67,6 +74,8 @@ const FACILITIES: SeedFacility[] = [
     ownership: 'general',
     location: { lat: 6.5095, lng: 3.3711 },
     verified: true,
+    level: 'tertiary',
+    ambulances: [['LAG-B01 (example)', 'ac', 'available']],
     oxygen: 'available',
     specialists: [['general surgery', 'on_site'], ['neurosurgery', 'on_site'], ['obstetrics', 'on_call']],
     beds: { icu: [10, 2, 6], hdu: [10, 3, 7], ae: [30, 6, 22], paeds: [14, 3, 9], maternity: [16, 4, 10] },
@@ -80,6 +89,7 @@ const FACILITIES: SeedFacility[] = [
     ownership: 'private',
     location: { lat: 6.4969, lng: 3.3481 },
     verified: true,
+    level: 'secondary',
     oxygen: 'low',
     specialists: [['general surgery', 'on_call'], ['obstetrics', 'on_site']],
     beds: { icu: [4, 1, 2], hdu: [6, 2, 3], ae: [12, 3, 8], maternity: [8, 2, 5] },
@@ -93,6 +103,8 @@ const FACILITIES: SeedFacility[] = [
     ownership: 'mission',
     location: { lat: 6.4474, lng: 3.472 },
     verified: true,
+    level: 'secondary',
+    ambulances: [['LAG-D01 (example)', 'regular', 'offline']],
     oxygen: 'available',
     specialists: [['general surgery', 'on_site']],
     beds: { icu: [5, 1, 3], hdu: [6, 2, 2], ae: [15, 4, 10], paeds: [8, 2, 3] },
@@ -106,6 +118,7 @@ const FACILITIES: SeedFacility[] = [
     ownership: 'private',
     location: { lat: 6.6194, lng: 3.5105 },
     verified: false,
+    level: 'primary',
   },
   {
     recordId: 'DEMO-006',
@@ -116,6 +129,35 @@ const FACILITIES: SeedFacility[] = [
     ownership: 'general',
     location: { lat: 6.4316, lng: 2.8876 },
     verified: false,
+    level: 'secondary',
+  },
+  {
+    recordId: 'DEMO-007',
+    name: 'Demo Primary Health Centre G, Mushin (example)',
+    lga: 'Mushin',
+    address: 'Example Street, Mushin (example)',
+    type: 'clinic',
+    ownership: 'general',
+    location: { lat: 6.5273, lng: 3.3414 },
+    verified: true,
+    level: 'primary',
+    oxygen: 'none',
+    beds: { ae: [4, 1, 1] },
+  },
+  {
+    recordId: 'DEMO-008',
+    name: 'Demo Ambulance Service H, Oshodi (example)',
+    lga: 'Oshodi-Isolo',
+    address: 'Example Road, Oshodi (example)',
+    type: 'ambulance_operator',
+    ownership: 'private',
+    location: { lat: 6.5536, lng: 3.3436 },
+    verified: true,
+    ambulances: [
+      ['OPS-H01 (example)', 'regular', 'available'],
+      ['OPS-H02 (example)', 'ac', 'available'],
+      ['OPS-H03 (example)', 'premium', 'available'],
+    ],
   },
 ];
 
@@ -124,7 +166,12 @@ const STAFF: { role: Role; prefix: string; label: string }[] = [
   { role: 'nurse', prefix: 'nurse', label: 'Triage Nurse' },
   { role: 'matron', prefix: 'matron', label: 'Matron' },
   { role: 'facility_admin', prefix: 'admin', label: 'Facility Admin' },
+  { role: 'dispatcher', prefix: 'dispatch', label: 'Ambulance Dispatcher' },
+  { role: 'driver', prefix: 'driver', label: 'Ambulance Driver' },
 ];
+
+/** An ambulance operator has no wards: just its admin, dispatcher and driver. */
+const OPERATOR_ROLES: Role[] = ['facility_admin', 'dispatcher', 'driver'];
 
 async function main() {
   const uri = process.env.MONGODB_URI;
@@ -140,7 +187,8 @@ async function main() {
   const users = mongoose.model(User.name, UserSchema) as unknown as Model<User>;
   const beds = mongoose.model(BedCategory.name, BedCategorySchema) as unknown as Model<BedCategory>;
   const rosters = mongoose.model(DutyRoster.name, DutyRosterSchema) as unknown as Model<DutyRoster>;
-  await Promise.all([facilities, counters, users, beds, rosters].map((m) => m.init()));
+  const ambulances = mongoose.model(Ambulance.name, AmbulanceSchema) as unknown as Model<Ambulance>;
+  await Promise.all([facilities, counters, users, beds, rosters, ambulances].map((m) => m.init()));
 
   const now = new Date();
   const logins: string[][] = [];
@@ -155,7 +203,7 @@ async function main() {
 
     const live = f.verified
       ? {
-          oxygen: { state: f.oxygen!, source: 'cylinder', updatedAt: now, by: new Types.ObjectId() },
+          ...(f.oxygen ? { oxygen: { state: f.oxygen, source: 'cylinder', updatedAt: now, by: new Types.ObjectId() } } : {}),
           specialists: (f.specialists ?? []).map(([specialty, availability]) => ({
             specialty,
             availability,
@@ -183,6 +231,18 @@ async function main() {
           registrySource: { name: 'demo-seed (fictional)', recordId: f.recordId, importedAt: now },
           status: f.verified ? 'verified' : 'unclaimed',
           liveStatus: live,
+          ...(f.level ? { level: f.level } : {}),
+          settings: { acceptReferrals: true, acceptAmbulanceRequests: true },
+          fleet: { maxAmbulances: (f.ambulances?.length ?? 0) + 1 },
+          plan: { tier: f.level === 'primary' ? 'free' : 'subscribed', updatedAt: now, note: 'Demo seed' },
+          ...(f.verified
+            ? {
+                contacts: {
+                  it: { name: 'IT contact (example)', phone: `+234800${code}100`, email: `it.${code}@${EMAIL_DOMAIN}` },
+                  nursing: { name: 'Nursing contact (example)', phone: `+234800${code}200`, email: `nursing.${code}@${EMAIL_DOMAIN}` },
+                },
+              }
+            : {}),
           ...(f.verified
             ? { facilityCode: code, displayCode: displayCode(f.type, code!), dutyPhone: `+234800${code}000` }
             : {}),
@@ -204,7 +264,9 @@ async function main() {
     const rosterEntries: { userId: Types.ObjectId; permission: Permission; onDutyFrom: Date; onDutyTo: Date }[] = [];
     const weekStart = lagosWeekStart(now);
     const weekEnd = new Date(weekStart.getTime() + 7 * 24 * 60 * 60 * 1000);
-    for (const s of STAFF) {
+    const staffHere = f.type === 'ambulance_operator' ? STAFF.filter((s) => OPERATOR_ROLES.includes(s.role)) : STAFF;
+    const driverIds: Types.ObjectId[] = [];
+    for (const s of staffHere) {
       const email = `${s.prefix}.${code}@${EMAIL_DOMAIN}`;
       const u = await users.findOneAndUpdate(
         { facilityCode: code, email },
@@ -215,11 +277,27 @@ async function main() {
         { upsert: true, new: true },
       );
       logins.push([code!, email, s.role]);
+      if (s.role === 'driver') driverIds.push(u!._id);
+      if (s.role === 'ae_doctor' && f.recordId === 'DEMO-001') {
+        // One demo doctor carries an MDCN number, to show the optional field filled in.
+        await users.updateOne({ _id: u!._id }, { $set: { mdcnNumber: 'MDCN/R/00000 (example)' } });
+      }
       for (const p of ['referral.send', 'referral.accept'] as Permission[]) {
         if (u!.permissions.includes(p)) rosterEntries.push({ userId: u!._id, permission: p, onDutyFrom: weekStart, onDutyTo: weekEnd });
       }
     }
     await rosters.updateOne({ facilityCode: code, weekStart }, { $set: { entries: rosterEntries } }, { upsert: true });
+
+    for (const [label, vehicleClass, status] of f.ambulances ?? []) {
+      await ambulances.updateOne(
+        { ownerFacility: code, label },
+        {
+          $set: { level: vehicleClass === 'premium' ? 'als' : 'bls', vehicleClass, status, currentRequestId: null },
+          $setOnInsert: driverIds[0] ? { driverUserId: driverIds[0], driverName: `Ambulance Driver (demo ${code})` } : {},
+        },
+        { upsert: true },
+      );
+    }
   }
 
   // Two platform admins: claims need two distinct approvals (1-4).

@@ -65,7 +65,7 @@ so start the server with `WAVE_TIMEOUT_CRITICAL_SECONDS=20` for a run of about a
 npm test
 ```
 
-53 unit tests, no database needed:
+59 unit tests, no database needed:
 
 | Spec | Covers |
 |---|---|
@@ -75,6 +75,7 @@ npm test
 | `payments/payment-assertions.spec.ts` | the pure currency/amount checks |
 | `cases/state-machine.spec.ts` | transitions; payment never gates care |
 | `facilities/facility-code.spec.ts` | display code + Luhn check digit |
+| `enquiries/enquiries.spec.ts` | website contact form: validation, honeypot saves nothing, 5 per IP per hour, status change records the admin |
 
 The atomicity tests use `src/test-utils/fake-model.ts`, an in-memory model whose updates are
 atomic per call, the way a single-document MongoDB update is. The same race was also run against
@@ -197,6 +198,13 @@ Freshness: under 2 h `fresh`, 2–4 h `ageing`, over 4 h `stale` (never auto-mat
 
 **Payments**: `POST /cases/:id/payments { payerEmail }`, `GET /payments/verify/:reference`,
 `POST /payments/webhook/paystack`.
+
+**Enquiries** (the public website's contact form)
+
+| | |
+|---|---|
+| `POST /enquiries` `{ reason, fullName, facilityName?, email, message }` | **No sign-in.** `reason`: `onboard` \| `blood-bank` \| `ambulance` \| `partner` \| `press` \| `other`. 5 per IP per hour (429); the IP is counted in Redis, never stored. A filled `website` honeypot gets the same `{ received: true }` and is not saved. The website's origin must be in `CORS_ORIGINS` |
+| `GET /admin/enquiries?status=` · `PATCH /admin/enquiries/:id` `{ status }` | `platform.admin`. Status `new` → `in_progress` → `closed`; the change records who and when |
 
 **Other**: `GET /health`, `GET /admin/alerts`, `GET /admin/audit/verify`, `/ambulances…`
 (`transport.manage`), `/blood…` (404 while flagged off).

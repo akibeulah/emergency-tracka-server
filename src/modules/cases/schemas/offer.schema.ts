@@ -56,6 +56,10 @@ export class Offer {
   @Prop()
   respondedAt?: Date;
 
+  /** The receiver's answer to "Is your ambulance available?" next to Accept. */
+  @Prop()
+  ambulanceAvailable?: boolean;
+
   createdAt?: Date;
   updatedAt?: Date;
 }

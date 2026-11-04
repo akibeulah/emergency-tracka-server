@@ -31,6 +31,11 @@ export const envSchema = Joi.object({
 
   FEATURE_BLOOD: Joi.boolean().default(false),
 
+  // Kobo fare table override for ambulance tiers (transport/fares.ts). Empty = defaults.
+  AMBULANCE_FARES_JSON: Joi.string().allow('').default(''),
+  // Build MongoDB indexes at boot. Defaults to on outside production.
+  MONGO_AUTO_INDEX: Joi.boolean(),
+
   PAYSTACK_SECRET_KEY: Joi.string().allow('').default(''),
   PAYSTACK_CALLBACK_URL: Joi.string().allow('').default(''),
   PROXY_URL: Joi.string().allow('').default(''),
@@ -62,6 +67,8 @@ export interface Env {
   RECONCILIATION_INTERVAL_SECONDS: number;
   ROSTER_ENFORCEMENT: 'when_present' | 'strict';
   FEATURE_BLOOD: boolean;
+  AMBULANCE_FARES_JSON: string;
+  MONGO_AUTO_INDEX?: boolean;
   PAYSTACK_SECRET_KEY: string;
   PAYSTACK_CALLBACK_URL: string;
   PROXY_URL: string;

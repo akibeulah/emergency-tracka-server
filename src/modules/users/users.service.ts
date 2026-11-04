@@ -26,6 +26,21 @@ export class UsersService {
     return this.users.create({ ...dto, facilityCode, permissions, status: 'active' });
   }
 
+  async updateStaff(facilityCode: string, userId: string, dto: { name?: string; mdcnNumber?: string }) {
+    if (!Types.ObjectId.isValid(userId)) throw new NotFoundException('No such staff member at this facility.');
+    const $set: Record<string, unknown> = {};
+    const $unset: Record<string, ''> = {};
+    if (dto.name !== undefined) $set.name = dto.name.trim();
+    if (dto.mdcnNumber !== undefined) {
+      if (dto.mdcnNumber.trim()) $set.mdcnNumber = dto.mdcnNumber.trim();
+      else $unset.mdcnNumber = '';
+    }
+    if (!Object.keys($set).length && !Object.keys($unset).length) throw new BadRequestException('Nothing to update.');
+    const user = await this.users.findOneAndUpdate({ _id: userId, facilityCode }, { $set, $unset }, { new: true }).lean();
+    if (!user) throw new NotFoundException('No such staff member at this facility.');
+    return user;
+  }
+
   async setPermissions(facilityCode: string, userId: string, permissions: Permission[]) {
     const user = await this.users.findOneAndUpdate(
       { _id: userId, facilityCode },

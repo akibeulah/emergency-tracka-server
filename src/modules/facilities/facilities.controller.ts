@@ -3,7 +3,16 @@ import { AuthUser, CurrentUser } from '../../common/decorators/current-user.deco
 import { RequirePermissions } from '../../common/decorators/permissions.decorator';
 import { JwtAuthGuard } from '../auth/guards/jwt-auth.guard';
 import { PermissionsGuard } from '../auth/guards/permissions.guard';
-import { ReasonDto, RegistrySearchDto, SubmitClaimDto, UpdateProfileDto } from './dto/facilities.dto';
+import {
+  AdminListFacilitiesDto,
+  AdminUpdateFacilityDto,
+  ImportRegistryDto,
+  ReasonDto,
+  RegistrySearchDto,
+  SubmitClaimDto,
+  UpdateProfileDto,
+  UpdateSettingsDto,
+} from './dto/facilities.dto';
 import { FacilitiesService } from './facilities.service';
 
 @Controller('facilities')
@@ -37,6 +46,12 @@ export class FacilitiesController {
   updateProfile(@CurrentUser() user: AuthUser, @Body() dto: UpdateProfileDto) {
     return this.facilities.updateProfile(user.facilityCode, dto);
   }
+
+  @Patch('me/settings')
+  @RequirePermissions('facility.manage')
+  updateSettings(@CurrentUser() user: AuthUser, @Body() dto: UpdateSettingsDto) {
+    return this.facilities.updateSettings(user.facilityCode, dto, user);
+  }
 }
 
 /** Onboarding queue and suspension for platform administrators (Epic 1, 14). */
@@ -45,6 +60,16 @@ export class FacilitiesController {
 @RequirePermissions('platform.admin')
 export class AdminFacilitiesController {
   constructor(private readonly facilities: FacilitiesService) {}
+
+  @Get()
+  list(@Query() q: AdminListFacilitiesDto) {
+    return this.facilities.adminList(q);
+  }
+
+  @Post('import')
+  importRegistry(@Body() dto: ImportRegistryDto, @CurrentUser() admin: AuthUser) {
+    return this.facilities.importRegistry(dto, admin);
+  }
 
   @Get('claims')
   claims() {
@@ -64,6 +89,11 @@ export class AdminFacilitiesController {
   @Post(':id/suspend')
   suspend(@Param('id') id: string, @CurrentUser() admin: AuthUser, @Body() dto: ReasonDto) {
     return this.facilities.suspend(id, admin, dto.reason);
+  }
+
+  @Patch(':id')
+  update(@Param('id') id: string, @Body() dto: AdminUpdateFacilityDto, @CurrentUser() admin: AuthUser) {
+    return this.facilities.adminUpdate(id, dto, admin);
   }
 
   @Post(':id/reinstate')

@@ -6,7 +6,14 @@ import { DEFAULT_ROLE_PERMISSIONS } from '../../common/permissions';
 import { AuditService } from '../audit/audit.service';
 import { SessionsService } from '../auth/sessions.service';
 import { User, UserDocument } from '../users/schemas/user.schema';
-import { SubmitClaimDto, UpdateProfileDto } from './dto/facilities.dto';
+import {
+  AdminListFacilitiesDto,
+  AdminUpdateFacilityDto,
+  ImportRegistryDto,
+  SubmitClaimDto,
+  UpdateProfileDto,
+  UpdateSettingsDto,
+} from './dto/facilities.dto';
 import { displayCode, nextFacilityCode } from './facility-code';
 import { Counter, CounterDocument } from './schemas/counter.schema';
 import { Facility, FacilityDocument } from './schemas/facility.schema';
@@ -33,7 +40,7 @@ export class FacilitiesService {
   searchRegistry(q: string) {
     const escaped = q.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
     return this.facilities
-      .find({ status: 'unclaimed', name: { $regex: escaped, $options: 'i' } }, { name: 1, address: 1, lga: 1, type: 1 })
+      .find({ status: 'unclaimed', name: { $regex: escaped, $options: 'i' } }, { name: 1, address: 1, lga: 1, type: 1, level: 1 })
       .limit(20)
       .lean();
   }
@@ -227,7 +234,7 @@ export class FacilitiesService {
     return this.facilities
       .find(
         { status: 'verified' },
-        { name: 1, facilityCode: 1, displayCode: 1, type: 1, lga: 1, address: 1, location: 1, dutyPhone: 1, reliability: 1 },
+        { name: 1, facilityCode: 1, displayCode: 1, type: 1, level: 1, lga: 1, address: 1, location: 1, dutyPhone: 1, reliability: 1 },
       )
       .sort({ name: 1 })
       .lean();
@@ -240,7 +247,133 @@ export class FacilitiesService {
     if (dto.oxygenSource) $set['profile.oxygen.source'] = dto.oxygenSource;
     if (dto.dutyPhone) $set.dutyPhone = dto.dutyPhone;
     if (dto.location) $set.location = dto.location;
+    if (dto.level) $set.level = dto.level;
+    if (dto.contacts?.it) $set['contacts.it'] = dto.contacts.it;
+    if (dto.contacts?.nursing) $set['contacts.nursing'] = dto.contacts.nursing;
+    if (dto.maxAmbulances !== undefined) $set['fleet.maxAmbulances'] = dto.maxAmbulances;
     if (!Object.keys($set).length) throw new BadRequestException('Nothing to update.');
     return this.facilities.findOneAndUpdate({ facilityCode }, { $set }, { new: true }).lean();
+  }
+
+  /** Opt in or out of referrals and ambulance rides. Takes effect on the next match. */
+  async updateSettings(facilityCode: string, dto: UpdateSettingsDto, user: AuthUser) {
+    const $set: Record<string, unknown> = {};
+    if (dto.acceptReferrals !== undefined) $set['settings.acceptReferrals'] = dto.acceptReferrals;
+    if (dto.acceptAmbulanceRequests !== undefined) $set['settings.acceptAmbulanceRequests'] = dto.acceptAmbulanceRequests;
+    if (!Object.keys($set).length) throw new BadRequestException('Nothing to update.');
+    const updated = await this.facilities.findOneAndUpdate({ facilityCode }, { $set }, { new: true }).lean();
+    if (!updated) throw new NotFoundException('No such facility.');
+    await this.audit.append({
+      entityType: 'facility',
+      entityId: updated._id,
+      action: 'settings_changed',
+      newValue: { ...dto },
+      actorId: user.userId,
+      actorRole: user.role,
+    });
+    return updated;
+  }
+
+  // ─── Platform admin: the whole registry ─────────────────────────────────
+
+  /** Every facility on record (600+ in Lagos), searchable and paged. */
+  async adminList(q: AdminListFacilitiesDto) {
+    const page = q.page ?? 1;
+    const pageSize = q.pageSize ?? 50;
+    const filter: Record<string, unknown> = {};
+    if (q.status) filter.status = q.status;
+    if (q.level) filter.level = q.level;
+    const term = q.q?.trim();
+    if (term) {
+      const escaped = term.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+      filter.$or = [
+        { name: { $regex: escaped, $options: 'i' } },
+        { lga: { $regex: escaped, $options: 'i' } },
+        { facilityCode: term },
+      ];
+    }
+    const [items, total] = await Promise.all([
+      this.facilities
+        .find(filter, {
+          name: 1, type: 1, ownership: 1, level: 1, lga: 1, address: 1, status: 1, facilityCode: 1, displayCode: 1,
+          dutyPhone: 1, contacts: 1, settings: 1, plan: 1, fleet: 1, reliability: 1, location: 1, registrySource: 1,
+          createdAt: 1, updatedAt: 1,
+        })
+        .sort({ name: 1 })
+        .skip((page - 1) * pageSize)
+        .limit(pageSize)
+        .lean(),
+      this.facilities.countDocuments(filter),
+    ]);
+    return { items, total, page, pageSize };
+  }
+
+  async adminUpdate(facilityId: string, dto: AdminUpdateFacilityDto, admin: AuthUser) {
+    if (!Types.ObjectId.isValid(facilityId)) throw new NotFoundException('No such facility.');
+    const $set: Record<string, unknown> = {};
+    if (dto.level) $set.level = dto.level;
+    if (dto.plan) {
+      $set['plan.tier'] = dto.plan;
+      $set['plan.updatedAt'] = new Date();
+    }
+    if (dto.planNote !== undefined) $set['plan.note'] = dto.planNote;
+    if (!Object.keys($set).length) throw new BadRequestException('Nothing to update.');
+    const updated = await this.facilities.findByIdAndUpdate(facilityId, { $set }, { new: true }).lean();
+    if (!updated) throw new NotFoundException('No such facility.');
+    await this.audit.append({
+      entityType: 'facility',
+      entityId: updated._id,
+      action: 'admin_updated',
+      newValue: { ...dto },
+      actorId: admin.userId,
+      actorRole: admin.role,
+    });
+    return updated;
+  }
+
+  /**
+   * Upserts registry rows by recordId. Only unclaimed records are touched, so a
+   * re-import never overwrites a facility that has claimed or been verified.
+   */
+  async importRegistry(dto: ImportRegistryDto, admin: AuthUser) {
+    const now = new Date();
+    let created = 0;
+    let updated = 0;
+    let skipped = 0;
+    for (const row of dto.rows) {
+      const existing = await this.facilities.findOne({ 'registrySource.recordId': row.recordId }, { status: 1 }).lean();
+      if (existing && existing.status !== 'unclaimed') {
+        skipped++;
+        continue;
+      }
+      await this.facilities.updateOne(
+        { 'registrySource.recordId': row.recordId },
+        {
+          $set: {
+            name: row.name,
+            type: row.type,
+            ownership: row.ownership ?? 'other',
+            ...(row.level ? { level: row.level } : {}),
+            ...(row.address ? { address: row.address } : {}),
+            ...(row.lga ? { lga: row.lga } : {}),
+            ...(row.location ? { location: row.location } : {}),
+            registrySource: { name: dto.source, recordId: row.recordId, importedAt: now },
+          },
+          $setOnInsert: { status: 'unclaimed' },
+        },
+        { upsert: true },
+      );
+      if (existing) updated++;
+      else created++;
+    }
+    await this.audit.append({
+      entityType: 'registry',
+      entityId: new Types.ObjectId(),
+      action: 'registry_imported',
+      newValue: { source: dto.source, created, updated, skipped },
+      actorId: admin.userId,
+      actorRole: admin.role,
+    });
+    return { created, updated, skipped, total: dto.rows.length };
   }
 }

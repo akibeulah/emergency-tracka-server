@@ -131,6 +131,7 @@ export class AuthService {
       facilityCode: user.facilityCode,
       role: user.role,
       permissions: user.permissions,
+      mdcnNumber: user.mdcnNumber ?? null,
     };
   }
 }

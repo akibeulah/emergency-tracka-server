@@ -16,6 +16,10 @@ export const DomainEvents = {
   BedHoldWarning: 'case.bed_hold_warning',
   BedHoldReleased: 'case.bed_hold_released',
   CapacityUpdated: 'capacity.updated',
+  CapacityThreshold: 'capacity.threshold',
+  AmbulanceRequested: 'ambulance.requested',
+  AmbulanceUpdated: 'ambulance.updated',
+  HandoverVerified: 'case.handover_verified',
   PaymentConfirmed: 'payment.confirmed',
 } as const;
 export type DomainEventName = (typeof DomainEvents)[keyof typeof DomainEvents];

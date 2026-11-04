@@ -1,6 +1,6 @@
 import { bedStatus, freshness, Freshness } from '../capacity/capacity-status';
 import { BedCategoryName } from '../capacity/schemas/bed-category.schema';
-import { OxygenState, SpecialistAvailability } from '../facilities/schemas/facility.schema';
+import { CARE_LEVEL_RANK, CareLevel, OxygenState, SpecialistAvailability } from '../facilities/schemas/facility.schema';
 import { CaseRequirements } from './schemas/case.schema';
 
 /**
@@ -17,6 +17,8 @@ export interface CandidateFacility {
   location?: { lat: number; lng: number };
   reliabilityBadge?: 'verified' | 'reliable' | 'under_review';
   dutyPhone?: string;
+  /** Primary / secondary / tertiary. Unknown is shown as a warning when a level is asked for. */
+  level?: CareLevel;
   oxygen?: { state: OxygenState; updatedAt: Date };
   specialists: { specialty: string; availability: SpecialistAvailability; updatedAt?: Date }[];
   beds: { name: BedCategoryName; maxSpaces: number; limitedThreshold: number; occupied: number; updatedAt: Date }[];
@@ -42,6 +44,7 @@ export interface MatchMarkers {
   oxygen: Marker;
   specialists: Marker;
   blood: Marker;
+  careLevel: Marker;
 }
 
 export interface RankedFacility {
@@ -58,6 +61,9 @@ export interface RankedFacility {
   packagePrice?: number;
   reliabilityBadge?: string;
   dutyPhone?: string;
+  level?: CareLevel;
+  /** Kobo. Set by the engine when the case needs an ambulance: fixed tier by distance. */
+  ambulanceFare?: number;
 }
 
 export interface ExcludedFacility {
@@ -157,7 +163,17 @@ function check(c: CandidateFacility, input: MatchInput): { markers: MatchMarkers
     if (blood === 'fail') reasons.push('blood_unavailable');
   }
 
-  return { markers: { bed: bedMarker, freshness: freshMarker, oxygen, specialists, blood }, reasons, bedsFree, dataFreshness };
+  // Care level (referral pathway): lower is excluded, unknown is a warning.
+  let careLevel: Marker = 'not_checked';
+  if (req.minCareLevel) {
+    if (!c.level) careLevel = 'warn';
+    else if (CARE_LEVEL_RANK[c.level] < CARE_LEVEL_RANK[req.minCareLevel]) {
+      careLevel = 'fail';
+      reasons.push(`below_${req.minCareLevel}_care`);
+    } else careLevel = 'ok';
+  }
+
+  return { markers: { bed: bedMarker, freshness: freshMarker, oxygen, specialists, blood, careLevel }, reasons, bedsFree, dataFreshness };
 }
 
 /**
@@ -188,6 +204,7 @@ export function matchFacilities(input: MatchInput): MatchResult {
       packagePrice: c.packagePrice,
       reliabilityBadge: c.reliabilityBadge,
       dutyPhone: c.dutyPhone,
+      level: c.level,
     });
   }
 

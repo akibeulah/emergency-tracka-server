@@ -5,7 +5,18 @@ import { JwtAuthGuard } from '../auth/guards/jwt-auth.guard';
 import { PermissionsGuard } from '../auth/guards/permissions.guard';
 import { RosterGuard } from '../auth/guards/roster.guard';
 import { CasesService, toActor } from './cases.service';
-import { AdvanceStageDto, CreateCaseDto, DeclineDto, ListCasesDto, OptionalNoteDto, ReasonNoteDto, ReceivedDto, SendCaseDto } from './dto/cases.dto';
+import {
+  AcceptDto,
+  AdvanceStageDto,
+  CreateCaseDto,
+  DeclineDto,
+  ListCasesDto,
+  OptionalNoteDto,
+  ReasonNoteDto,
+  ReceivedDto,
+  SendCaseDto,
+  VerifyHandoverDto,
+} from './dto/cases.dto';
 import { ReferralEngine } from './referral-engine.service';
 
 @Controller('cases')
@@ -49,6 +60,16 @@ export class CasesController {
   @RequirePermissions('handover.accept')
   received(@CurrentUser() user: AuthUser, @Param('id') id: string, @Body() dto: ReceivedDto) {
     return this.cases.confirmReceived(id, user, dto.clinicianName);
+  }
+
+  /**
+   * The escort (sending side) or the ambulance crew confirms they are at the
+   * receiving facility: QR scanned in the browser, or the six digits typed.
+   */
+  @Post(':id/handover/verify')
+  @HttpCode(HttpStatus.OK)
+  verifyHandover(@CurrentUser() user: AuthUser, @Param('id') id: string, @Body() dto: VerifyHandoverDto) {
+    return this.cases.verifyHandover(id, user, dto);
   }
 
   @Get(':id/matches')
@@ -105,8 +126,8 @@ export class OffersController {
   @HttpCode(HttpStatus.OK)
   @RequirePermissions('referral.accept')
   @RequireOnDuty('referral.accept')
-  accept(@CurrentUser() user: AuthUser, @Param('id') id: string) {
-    return this.engine.accept(id, toActor(user), user.permissions.includes('referral.finalApprove'));
+  accept(@CurrentUser() user: AuthUser, @Param('id') id: string, @Body() dto: AcceptDto) {
+    return this.engine.accept(id, toActor(user), user.permissions.includes('referral.finalApprove'), dto.ambulanceAvailable ?? false);
   }
 
   @Post(':id/decline')

@@ -1,6 +1,8 @@
 import { Prop, Schema, SchemaFactory } from '@nestjs/mongoose';
 import { HydratedDocument, Types } from 'mongoose';
 import { BedCategoryName } from '../../capacity/schemas/bed-category.schema';
+import { CareLevel } from '../../facilities/schemas/facility.schema';
+import { VehicleClass } from '../../transport/fares';
 import { CASE_STAGES, CaseStage } from '../state-machine';
 
 export type CaseDocument = HydratedDocument<Case>;
@@ -15,6 +17,8 @@ export interface CaseRequirements {
   /** Shown to the receiver, not hard-checked. */
   ventilator?: boolean;
   specialists: string[];
+  /** Referral pathway: the lowest level of care that can take this patient. */
+  minCareLevel?: CareLevel;
   /** Ignored by matching while the blood flag is off (G2). */
   blood?: { group: string; rh: 'pos' | 'neg'; component: string; units: number };
 }
@@ -25,6 +29,11 @@ export interface CaseBrief {
   sex: 'male' | 'female' | 'unknown';
   chiefComplaint: string;
   freeText?: string;
+  /** Main diagnosis or impression, in the sending clinician's words. */
+  impression?: string;
+  /** Investigations done or requested, entered by the clinician. Nothing suggests them. */
+  investigations?: string;
+  /** Only the vitals the clinician switched on: spo2 (%), gcs (3-15), tempC. */
   vitals?: Record<string, string | number>;
   consciousness?: 'alert' | 'voice' | 'pain' | 'unresponsive';
   priority: CasePriority;
@@ -47,6 +56,36 @@ export interface CaseClaim {
   facilityCode: string;
   userId: Types.ObjectId;
   approvalDeadline: Date;
+}
+
+export const TRANSPORT_STATUSES = [
+  'not_needed',
+  'awaiting_accept',
+  'receiver_ambulance',
+  'open_request',
+  'assigned',
+  'en_route',
+  'at_pickup',
+  'patient_on_board',
+  'arrived',
+  'cancelled',
+] as const;
+export type TransportStatus = (typeof TRANSPORT_STATUSES)[number];
+
+/** The ambulance side of a case (1 Nov 2026 minute). Written by the transport module. */
+export interface CaseTransport {
+  needed: boolean;
+  vehicleClass: VehicleClass;
+  status: TransportStatus;
+  requestId?: Types.ObjectId;
+  providerFacility?: string;
+  providerName?: string;
+  ambulanceLabel?: string;
+  driverName?: string;
+  /** Kobo, fixed tier by distance. */
+  fare?: number;
+  routeKm?: number;
+  updatedAt?: Date;
 }
 
 export interface BedHold {
@@ -117,7 +156,7 @@ export class Case {
   hmoPolicyNumber?: string;
 
   @Prop({ type: Object })
-  transport?: Record<string, unknown>;
+  transport?: CaseTransport;
 
   @Prop({ type: Object })
   handover?: Record<string, unknown>;
@@ -152,3 +191,4 @@ CaseSchema.index({ senderFacility: 1, clientRef: 1 }, { unique: true, partialFil
 CaseSchema.index({ acceptedBy: 1, stage: 1 });
 CaseSchema.index({ stage: 1, 'routing.waveDeadline': 1 });
 CaseSchema.index({ 'bedHold.status': 1, 'bedHold.expiresAt': 1 });
+CaseSchema.index({ 'transport.providerFacility': 1, stage: 1 });

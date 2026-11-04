@@ -11,6 +11,7 @@ export const ALERT_TYPES = [
   'repeated_failed_signin',
   'paid_after_cancellation',
   'payment_mismatch',
+  'capacity_threshold',
 ] as const;
 
 /** Oversight queue for platform admins (Epic 14/15). */
@@ -21,6 +22,10 @@ export class Alert {
 
   @Prop()
   facilityCode?: string;
+
+  /** 'platform' goes to the admin console; 'facility' to that facility's own console. */
+  @Prop({ type: String, enum: ['platform', 'facility'], default: 'platform' })
+  audience: 'platform' | 'facility';
 
   @Prop({ type: String, enum: ['info', 'warning', 'critical'], default: 'warning' })
   severity: 'info' | 'warning' | 'critical';
@@ -34,3 +39,4 @@ export class Alert {
 
 export const AlertSchema = SchemaFactory.createForClass(Alert);
 AlertSchema.index({ status: 1, createdAt: -1 });
+AlertSchema.index({ audience: 1, facilityCode: 1, status: 1, createdAt: -1 });

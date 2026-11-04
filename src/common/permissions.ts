@@ -15,6 +15,7 @@ export const PERMISSIONS = [
   'facility.manage',
   'pricing.manage',
   'transport.manage',
+  'transport.respond',
   'blood.manage',
   'platform.admin',
 ] as const;
@@ -65,9 +66,9 @@ export const DEFAULT_ROLE_PERMISSIONS: Record<Role, Permission[]> = {
   ],
   records_officer: ['referral.incoming'],
   blood_bank_officer: ['blood.manage'],
-  dispatcher: ['transport.manage', 'referral.incoming'],
-  paramedic: ['handover.accept'],
-  driver: [],
+  dispatcher: ['transport.manage', 'transport.respond', 'referral.incoming'],
+  paramedic: ['handover.accept', 'transport.respond'],
+  driver: ['transport.respond'],
   facility_admin: [
     'staff.manage',
     'facility.manage',
@@ -76,6 +77,7 @@ export const DEFAULT_ROLE_PERMISSIONS: Record<Role, Permission[]> = {
     'roster.manage',
     'pricing.manage',
     'transport.manage',
+    'transport.respond',
   ],
   platform_admin: ['platform.admin'],
   donor: [],

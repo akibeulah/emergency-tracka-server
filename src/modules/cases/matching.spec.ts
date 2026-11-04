@@ -187,3 +187,26 @@ describe('validateSelection (4-5)', () => {
     expect(validateSelection(ranked, codes(ranked))).toEqual({ ok: false, problem: 'too_many' });
   });
 });
+
+describe('matchFacilities: referral pathway (care level, 1 Nov 2026)', () => {
+  const req = { bedCategory: 'icu' as const, oxygen: true, specialists: ['general surgery'], minCareLevel: 'tertiary' as const };
+
+  it('excludes a facility below the level asked for and passes one at or above it', () => {
+    const secondary = facility('0001', { level: 'secondary' });
+    const tertiary = facility('0002', { level: 'tertiary' });
+    const { ranked, excluded } = matchFacilities(input([secondary, tertiary], { requirements: req }));
+    expect(codes(ranked)).toEqual(['0002']);
+    expect(ranked[0].markers.careLevel).toBe('ok');
+    expect(excluded[0]).toMatchObject({ facilityCode: '0001', reasons: ['below_tertiary_care'] });
+  });
+
+  it('warns rather than excludes when a facility has no level on record', () => {
+    const { ranked } = matchFacilities(input([facility('0001')], { requirements: req }));
+    expect(ranked[0]).toMatchObject({ facilityCode: '0001', markers: { careLevel: 'warn' }, warnings: 1 });
+  });
+
+  it('does not check level when none is asked for', () => {
+    const { ranked } = matchFacilities(input([facility('0001', { level: 'primary' })]));
+    expect(ranked[0].markers.careLevel).toBe('not_checked');
+  });
+});

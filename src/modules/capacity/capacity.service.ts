@@ -4,8 +4,9 @@ import { InjectModel } from '@nestjs/mongoose';
 import { Model, Types } from 'mongoose';
 import { AuthUser } from '../../common/decorators/current-user.decorator';
 import { DomainEvents } from '../../common/events';
+import { AlertsService } from '../admin/alerts.service';
 import { Facility, FacilityDocument, OxygenState } from '../facilities/schemas/facility.schema';
-import { assertThreshold, bedStatus, freshness } from './capacity-status';
+import { assertThreshold, bedStatus, BedStatus, freshness } from './capacity-status';
 import { SpecialistStatusDto } from './dto/capacity.dto';
 import { BedCategory, BedCategoryDocument, BedCategoryName } from './schemas/bed-category.schema';
 
@@ -15,6 +16,7 @@ export class CapacityService {
     @InjectModel(BedCategory.name) private readonly beds: Model<BedCategoryDocument>,
     @InjectModel(Facility.name) private readonly facilities: Model<FacilityDocument>,
     private readonly events: EventEmitter2,
+    private readonly alerts: AlertsService,
   ) {}
 
   /** A facility's own bed tiles, with status and freshness derived at read time. */
@@ -78,7 +80,7 @@ export class CapacityService {
 
   /** Any nurse/doctor/duty lead may update; every change stamps who, when and which device (2-6). */
   async setOccupancy(facilityCode: string, name: BedCategoryName, occupied: number, user: AuthUser) {
-    const row = await this.beds.findOneAndUpdate(
+    const before = await this.beds.findOneAndUpdate(
       { facilityCode, name, maxSpaces: { $gte: occupied } },
       {
         $set: {
@@ -88,13 +90,14 @@ export class CapacityService {
           updatedDevice: user.deviceId,
         },
       },
-      { new: true },
     );
+    const row = before ? await this.beds.findById(before._id) : null;
     if (!row) {
       const exists = await this.beds.exists({ facilityCode, name });
       if (!exists) throw new NotFoundException(`This facility has no ${name} beds configured.`);
       throw new BadRequestException('Occupied beds cannot exceed the maximum spaces.');
     }
+    await this.checkThreshold(before!, row);
     this.changed(facilityCode);
     return this.present(row.toObject(), new Date());
   }
@@ -162,12 +165,14 @@ export class CapacityService {
 
   /** First accept reserves the bed (4-6). Atomic: never over-fills. */
   async reserveBed(facilityCode: string, name: BedCategoryName): Promise<boolean> {
-    const res = await this.beds.updateOne(
+    const before = await this.beds.findOneAndUpdate(
       { facilityCode, name, $expr: { $lt: ['$occupied', '$maxSpaces'] } },
       { $inc: { occupied: 1 }, $set: { updatedAt: new Date() } },
     );
-    if (res.modifiedCount === 1) this.changed(facilityCode);
-    return res.modifiedCount === 1;
+    if (!before) return false;
+    await this.checkThreshold(before, { ...before.toObject(), occupied: before.occupied + 1 });
+    this.changed(facilityCode);
+    return true;
   }
 
   async releaseBed(facilityCode: string, name: BedCategoryName): Promise<void> {
@@ -176,6 +181,27 @@ export class CapacityService {
       { $inc: { occupied: -1 }, $set: { updatedAt: new Date() } },
     );
     if (res.modifiedCount === 1) this.changed(facilityCode);
+  }
+
+  /**
+   * Threshold alert: a bed category that drops into Limited (free at or below its
+   * threshold) or to Full raises an alert in the facility's console, once per crossing.
+   */
+  private async checkThreshold(before: Pick<BedCategory, 'maxSpaces' | 'limitedThreshold' | 'occupied'>, after: BedCategory) {
+    const was = bedStatus(before.maxSpaces, before.limitedThreshold, before.occupied).status;
+    const now = bedStatus(after.maxSpaces, after.limitedThreshold, after.occupied);
+    const rank: Record<BedStatus, number> = { available: 0, limited: 1, full: 2 };
+    if (rank[now.status] <= rank[was]) return;
+    const severity = now.status === 'full' ? 'critical' : 'warning';
+    const context = {
+      category: after.name,
+      status: now.status,
+      free: now.free,
+      maxSpaces: after.maxSpaces,
+      limitedThreshold: after.limitedThreshold,
+    };
+    await this.alerts.raise({ type: 'capacity_threshold', audience: 'facility', facilityCode: after.facilityCode, severity, context });
+    this.events.emit(DomainEvents.CapacityThreshold, { facilities: [after.facilityCode], ...context, severity });
   }
 
   private present(row: BedCategory & { _id?: unknown }, now: Date) {

@@ -8,15 +8,18 @@ import {
   IsISO8601,
   IsMongoId,
   IsNotEmpty,
-  IsObject,
+  IsNumber,
   IsOptional,
   IsString,
   Matches,
+  Max,
   MaxLength,
   Min,
   ValidateNested,
 } from 'class-validator';
 import { BED_CATEGORY_NAMES, BedCategoryName } from '../../capacity/schemas/bed-category.schema';
+import { CARE_LEVELS, CareLevel } from '../../facilities/schemas/facility.schema';
+import { VEHICLE_CLASSES, VehicleClass } from '../../transport/fares';
 import { CASE_PRIORITIES, CasePriority } from '../schemas/case.schema';
 import { DECLINE_REASONS, DeclineReason } from '../schemas/offer.schema';
 
@@ -52,6 +55,11 @@ export class RequirementsDto {
   @IsString({ each: true })
   specialists: string[];
 
+  /** Pathway: primary, secondary or tertiary. Facilities below it are left out. */
+  @IsOptional()
+  @IsIn(CARE_LEVELS)
+  minCareLevel?: CareLevel;
+
   @IsOptional()
   @ValidateNested()
   @Type(() => BloodRequirementDto)
@@ -59,6 +67,36 @@ export class RequirementsDto {
 }
 
 /** The ~30-second quick brief (4-1). De-identified: no name, no NIN, no DOB (G3). */
+/** Sliders on the form; each one is sent only if the clinician switched it on. */
+export class VitalsDto {
+  @IsOptional()
+  @IsNumber()
+  @Min(50)
+  @Max(100)
+  spo2?: number;
+
+  @IsOptional()
+  @IsInt()
+  @Min(3)
+  @Max(15)
+  gcs?: number;
+
+  @IsOptional()
+  @IsNumber()
+  @Min(30)
+  @Max(45)
+  tempC?: number;
+}
+
+export class TransportRequestDto {
+  @IsBoolean()
+  needed: boolean;
+
+  @IsOptional()
+  @IsIn(VEHICLE_CLASSES)
+  vehicleClass?: VehicleClass;
+}
+
 export class CreateCaseDto {
   @Matches(/^(0-11m|1-4|5-12|13-17|18-39|40-64|65\+|unknown)$/, {
     message: 'ageBand must be one of 0-11m, 1-4, 5-12, 13-17, 18-39, 40-64, 65+, unknown',
@@ -79,8 +117,25 @@ export class CreateCaseDto {
   freeText?: string;
 
   @IsOptional()
-  @IsObject()
-  vitals?: Record<string, string | number>;
+  @IsString()
+  @MaxLength(300)
+  impression?: string;
+
+  @IsOptional()
+  @IsString()
+  @MaxLength(1000)
+  investigations?: string;
+
+  @IsOptional()
+  @ValidateNested()
+  @Type(() => VitalsDto)
+  vitals?: VitalsDto;
+
+  /** Left out: an ambulance is needed, regular tier. */
+  @IsOptional()
+  @ValidateNested()
+  @Type(() => TransportRequestDto)
+  transport?: TransportRequestDto;
 
   @IsOptional()
   @IsIn(['alert', 'voice', 'pain', 'unresponsive'])
@@ -134,6 +189,25 @@ export class SendCaseDto {
   @IsString()
   @MaxLength(200)
   belowTopRankReason?: string;
+}
+
+export class AcceptDto {
+  /** "Is your ambulance available?" Left out counts as no: the ride goes to everyone. */
+  @IsOptional()
+  @IsBoolean()
+  ambulanceAvailable?: boolean;
+}
+
+export class VerifyHandoverDto {
+  @IsOptional()
+  @Matches(/^\d{6}$/, { message: 'The handover code is six digits.' })
+  code?: string;
+
+  /** What the QR carries after the case id. */
+  @IsOptional()
+  @IsString()
+  @MaxLength(64)
+  token?: string;
 }
 
 export class DeclineDto {

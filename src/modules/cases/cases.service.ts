@@ -1,12 +1,21 @@
-import { BadRequestException, ConflictException, ForbiddenException, Injectable, NotFoundException } from '@nestjs/common';
+import {
+  BadRequestException,
+  ConflictException,
+  ForbiddenException,
+  HttpException,
+  HttpStatus,
+  Injectable,
+  NotFoundException,
+} from '@nestjs/common';
 import { InjectModel } from '@nestjs/mongoose';
-import { randomBytes, randomInt } from 'crypto';
+import { randomBytes, randomInt, timingSafeEqual } from 'crypto';
 import { Model, Types } from 'mongoose';
 import { AuthUser } from '../../common/decorators/current-user.decorator';
 import { DomainEvents } from '../../common/events';
 import { Counter, CounterDocument } from '../facilities/schemas/counter.schema';
 import { User, UserDocument } from '../users/schemas/user.schema';
 import { Actor, CaseJournal } from './case-journal.service';
+import { VerifyHandoverDto } from './dto/cases.dto';
 import { AdvanceableStage, CreateCaseDto } from './dto/cases.dto';
 import { ReferralEngine } from './referral-engine.service';
 import { Case, CaseDocument } from './schemas/case.schema';
@@ -39,7 +48,7 @@ export class CasesService {
   ) {}
 
   async create(user: AuthUser, dto: CreateCaseDto) {
-    const { hmoPolicyNumber, escortNurseId, clientRef, clientTimestamp, ...brief } = dto;
+    const { hmoPolicyNumber, escortNurseId, clientRef, clientTimestamp, transport, vitals, ...brief } = dto;
     if (clientRef) {
       const existing = await this.cases.findOne({ senderFacility: user.facilityCode, clientRef }).lean();
       if (existing) return existing;
@@ -60,12 +69,18 @@ export class CasesService {
         stage: 'draft',
         brief: {
           ...brief,
+          ...(vitals && Object.keys(vitals).length ? { vitals: { ...vitals } } : {}),
           requirements: {
             ...brief.requirements,
             specialists: brief.requirements.specialists.map((s) => s.trim().toLowerCase()),
           },
         },
         hmoPolicyNumber,
+        transport: {
+          needed: transport?.needed ?? true,
+          vehicleClass: transport?.vehicleClass ?? 'regular',
+          status: transport?.needed === false ? 'not_needed' : 'awaiting_accept',
+        },
         ...(escortNurseId ? { escortNurseId: new Types.ObjectId(escortNurseId), escortNurseName: nameOf(escortNurseId) } : {}),
         createdByName: nameOf(user.userId),
         clientRef,
@@ -101,7 +116,7 @@ export class CasesService {
       .find({ caseId: c._id, ...(c.senderFacility === user.facilityCode ? {} : { targetFacility: user.facilityCode }) })
       .sort({ wave: 1, rank: 1 })
       .lean();
-    return { ...c, offers };
+    return { ...forViewer(c, user.facilityCode), offers };
   }
 
   async timeline(caseId: string, user: AuthUser) {
@@ -109,8 +124,9 @@ export class CasesService {
     return this.journal.timeline(c._id);
   }
 
-  listOutgoing(facilityCode: string) {
-    return this.cases.find({ senderFacility: facilityCode }).sort({ createdAt: -1 }).limit(100).lean();
+  async listOutgoing(facilityCode: string) {
+    const rows = await this.cases.find({ senderFacility: facilityCode }).sort({ createdAt: -1 }).limit(100).lean();
+    return rows.map((c) => forViewer(c, facilityCode));
   }
 
   /** Cases this facility has taken and not yet handed over: the receiving side's "on the way" list. */
@@ -169,6 +185,63 @@ export class CasesService {
     return this.handover(caseId, user);
   }
 
+  /**
+   * The escort or the ambulance crew proves they reached the receiving facility
+   * by scanning its QR (camera in the browser) or typing its six digits. Five
+   * wrong tries lock it; the receiving team then confirms by hand.
+   */
+  async verifyHandover(caseId: string, user: AuthUser, dto: VerifyHandoverDto) {
+    if (!dto.code && !dto.token) throw new BadRequestException('Scan the QR or type the six-digit code.');
+    if (!Types.ObjectId.isValid(caseId)) throw new NotFoundException('No such case.');
+    const c = await this.cases
+      .findOne({
+        _id: caseId,
+        $or: [{ senderFacility: user.facilityCode }, { 'transport.providerFacility': user.facilityCode }],
+      })
+      .lean();
+    if (!c) throw new NotFoundException('No such case for your facility.');
+    const h = (c.handover ?? {}) as { sixDigitCode?: string; qrToken?: string; failedVerifies?: number; escortConfirmedAt?: Date };
+    if (h.escortConfirmedAt) return { verified: true, alreadyVerified: true, caseNumber: c.caseNumber };
+    if (!h.sixDigitCode || !h.qrToken) {
+      throw new ConflictException('The receiving team has not opened the handover code yet. Ask them to show it.');
+    }
+    if ((h.failedVerifies ?? 0) >= 5) {
+      throw new HttpException('Too many wrong codes. The receiving team must confirm the handover on their side.', HttpStatus.TOO_MANY_REQUESTS);
+    }
+    const ok = dto.token ? safeEqual(dto.token, h.qrToken) : safeEqual(dto.code!, h.sixDigitCode);
+    if (!ok) {
+      await this.cases.updateOne({ _id: c._id }, { $inc: { 'handover.failedVerifies': 1 } });
+      throw new BadRequestException('That code does not match this patient. Check it with the receiving team.');
+    }
+    const now = new Date();
+    await this.cases.updateOne(
+      { _id: c._id },
+      { $set: { 'handover.escortConfirmedAt': now, 'handover.escortConfirmedBy': new Types.ObjectId(user.userId), 'handover.escortFacility': user.facilityCode } },
+    );
+    await this.journal.record(c, 'handover_verified', toActor(user), { method: dto.token ? 'qr' : 'code' });
+    this.journal.emit(DomainEvents.HandoverVerified, {
+      facilities: [c.senderFacility, c.acceptedBy, c.transport?.providerFacility].filter((f): f is string => !!f),
+      caseId: String(c._id),
+      caseNumber: c.caseNumber,
+      method: dto.token ? 'qr' : 'code',
+    });
+    return { verified: true, alreadyVerified: false, caseNumber: c.caseNumber };
+  }
+
+  /**
+   * The ambulance crew moves the case: patient on board = in transit, arrived =
+   * arrived. Only the facility whose ambulance took the job may do this.
+   */
+  async advanceForTransport(caseId: Types.ObjectId | string, actor: NonNullable<Actor>, to: 'in_transit' | 'arrived') {
+    const before = await this.cases.findOneAndUpdate(
+      { _id: caseId, stage: { $in: stagesLeadingTo(to) }, acceptedBy: { $ne: null }, 'transport.providerFacility': actor.facilityCode },
+      { $set: { stage: to, ...(to === 'arrived' ? { 'bedHold.status': 'fulfilled' } : {}) } },
+    );
+    if (!before) return null; // already there, or moved on by the facilities; the crew's step still counts
+    await this.journal.stageChanged(before, before.stage, to, actor, { by: 'ambulance_crew' });
+    return this.cases.findById(before._id).lean();
+  }
+
   /** The "incoming bubble": open requests for this facility, newest first. */
   async listIncoming(facilityCode: string) {
     const offers = await this.offers
@@ -176,7 +249,7 @@ export class CasesService {
       .sort({ createdAt: -1 })
       .lean();
     const cases = await this.cases
-      .find({ _id: { $in: offers.map((o) => o.caseId) } }, { caseNumber: 1, senderFacility: 1, brief: 1, stage: 1, createdAt: 1, escortNurseId: 1, escortNurseName: 1 })
+      .find({ _id: { $in: offers.map((o) => o.caseId) } }, { caseNumber: 1, senderFacility: 1, brief: 1, stage: 1, createdAt: 1, escortNurseId: 1, escortNurseName: 1, transport: 1 })
       .lean();
     const byId = new Map(cases.map((c) => [String(c._id), c]));
     return offers.map((o) => ({ offer: o, case: byId.get(String(o.caseId)) ?? null }));
@@ -204,7 +277,7 @@ export class CasesService {
     }
     await this.engine.releaseBedHold(String(before._id), 'cancelled');
     await this.journal.stageChanged(before, before.stage, 'cancelled', toActor(user), { reason });
-    return this.cases.findById(before._id).lean();
+    return forViewer(await this.cases.findById(before._id).lean(), user.facilityCode);
   }
 
   /** in_transit → arrived → handed_over → closed. Never gated on payment. */
@@ -228,7 +301,7 @@ export class CasesService {
       throw new ConflictException(`This case cannot move to ${to.replace('_', ' ')} from where it is, or not by your facility.`);
     }
     await this.journal.stageChanged(before, before.stage, to, toActor(user));
-    return this.cases.findById(before._id).lean();
+    return forViewer(await this.cases.findById(before._id).lean(), user.facilityCode);
   }
 
   private async readable(caseId: string, user: AuthUser) {
@@ -238,6 +311,7 @@ export class CasesService {
     const involved =
       c.senderFacility === user.facilityCode ||
       c.acceptedBy === user.facilityCode ||
+      c.transport?.providerFacility === user.facilityCode ||
       (await this.offers.exists({ caseId: c._id, targetFacility: user.facilityCode }));
     if (!involved) throw new NotFoundException('No such case.');
     return c;
@@ -257,7 +331,13 @@ export class CasesService {
 }
 
 function presentHandover(c: { _id: Types.ObjectId; caseNumber: string; handover?: Record<string, unknown> }) {
-  const h = (c.handover ?? {}) as { sixDigitCode?: string; qrToken?: string; receivedAt?: Date; receivedBy?: string };
+  const h = (c.handover ?? {}) as {
+    sixDigitCode?: string;
+    qrToken?: string;
+    receivedAt?: Date;
+    receivedBy?: string;
+    escortConfirmedAt?: Date;
+  };
   return {
     caseId: String(c._id),
     caseNumber: c.caseNumber,
@@ -265,5 +345,22 @@ function presentHandover(c: { _id: Types.ObjectId; caseNumber: string; handover?
     qrToken: h.qrToken ?? null,
     receivedAt: h.receivedAt ?? null,
     receivedBy: h.receivedBy ?? null,
+    escortConfirmedAt: h.escortConfirmedAt ?? null,
   };
+}
+
+/**
+ * The handover code and QR token prove the escort reached the receiving
+ * facility, so only the receiving facility ever sees them.
+ */
+function forViewer<T extends { acceptedBy?: string | null; handover?: Record<string, unknown> } | null>(c: T, facilityCode: string): T {
+  if (!c || !c.handover || c.acceptedBy === facilityCode) return c;
+  const { sixDigitCode: _code, qrToken: _token, failedVerifies: _tries, ...rest } = c.handover;
+  return { ...c, handover: rest };
+}
+
+function safeEqual(a: string, b: string): boolean {
+  const x = Buffer.from(a);
+  const y = Buffer.from(b);
+  return x.length === y.length && timingSafeEqual(x, y);
 }

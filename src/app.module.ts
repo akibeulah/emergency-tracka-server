@@ -11,10 +11,12 @@ import { AuthModule } from './modules/auth/auth.module';
 import { BloodModule } from './modules/blood/blood.module';
 import { CapacityModule } from './modules/capacity/capacity.module';
 import { CasesModule } from './modules/cases/cases.module';
+import { EnquiriesModule } from './modules/enquiries/enquiries.module';
 import { ClinicalModule } from './modules/clinical/clinical.module';
 import { FacilitiesModule } from './modules/facilities/facilities.module';
 import { HealthController } from './modules/health/health.controller';
 import { NotificationsModule } from './modules/notifications/notifications.module';
+import { OverviewModule } from './modules/overview/overview.module';
 import { PaymentsModule } from './modules/payments/payments.module';
 import { PricingModule } from './modules/pricing/pricing.module';
 import { QueueModule } from './modules/queue/queue.module';
@@ -35,7 +37,8 @@ import { UsersModule } from './modules/users/users.module';
         uri: config.get('MONGODB_URI', { infer: true }),
         // Indexes (incl. the unique and partial ones in §5) are built at boot in dev;
         // in production they are built deliberately, not on every deploy.
-        autoIndex: config.get('NODE_ENV', { infer: true }) !== 'production',
+        // MONGO_AUTO_INDEX=true builds them on a fresh production database (first deploy).
+        autoIndex: config.get('MONGO_AUTO_INDEX', { infer: true }) ?? config.get('NODE_ENV', { infer: true }) !== 'production',
       }),
     }),
     BullModule.forRootAsync({
@@ -59,6 +62,8 @@ import { UsersModule } from './modules/users/users.module';
     BloodModule,
     PaymentsModule,
     AdminModule,
+    EnquiriesModule,
+    OverviewModule,
     RealtimeModule,
     QueueModule,
   ],

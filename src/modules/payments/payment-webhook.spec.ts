@@ -72,7 +72,7 @@ describe('PaymentOrchestrator.handleWebhook', () => {
     expect(unconfigured.verifyWebhookSignature(raw, createHmac('sha512', '').update(raw).digest('hex'))).toBe(false);
   });
 
-  it('settles a correct payment: case paid, funds held in a three-way split, stage untouched', async () => {
+  it('settles a correct payment: case paid, funds held for facility and transport, no commission, stage untouched', async () => {
     const res = await send(body({ reference: 'ref-1', amount: 500_000, currency: 'NGN' }));
     expect(res).toEqual({ received: true, outcome: 'finalized' });
     expect(cases.docs[0].payment).toMatchObject({ status: 'paid', reference: 'ref-1' });
@@ -80,9 +80,8 @@ describe('PaymentOrchestrator.handleWebhook', () => {
     expect(records.docs[0]).toMatchObject({ status: 'success', success: true });
     expect(settlements.docs[0]).toMatchObject({ status: 'held' });
     expect(settlements.docs[0].splits).toEqual([
-      { party: 'receiving_facility', facilityCode: '0002', amount: 400_000, status: 'held' },
+      { party: 'receiving_facility', facilityCode: '0002', amount: 420_000, status: 'held' },
       { party: 'transport', amount: 80_000, status: 'held' },
-      { party: 'platform', amount: 20_000, status: 'held' },
     ]);
     expect(callbacks.docs[0]).toMatchObject({ signatureValid: true, isProcessed: true, outcome: 'finalized' });
   });

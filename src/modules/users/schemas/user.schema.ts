@@ -29,6 +29,13 @@ export class User {
   @Prop()
   phone?: string;
 
+  /**
+   * Medical and Dental Council of Nigeria registration number for doctors and
+   * clinicians. Optional for now; may become compulsory.
+   */
+  @Prop({ trim: true })
+  mdcnNumber?: string;
+
   /** argon2 hash for the shared-ward-device PIN switch (2-8). Not wired yet. */
   @Prop({ select: false })
   pinHash?: string;

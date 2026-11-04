@@ -273,17 +273,19 @@ export class PaymentOrchestrator {
 }
 
 /**
- * Three-way split (arch §4): care package → receiving facility, ambulance fee
- * → transport, the remainder of the locked total → platform. Sums to total.
+ * Split: care package → receiving facility, ambulance fee → transport.
+ *
+ * No platform commission on care payments (1 Nov 2026 minute): Emergency Tracka is
+ * paid by facility subscriptions. Anything in the total beyond the two parts stays
+ * with the receiving facility rather than going to the platform.
  */
 export function settlementSplits(c: Pick<Case, 'pricingSnapshot' | 'acceptedBy'>): SettlementSplit[] {
   const p = c.pricingSnapshot;
   if (!p) return [];
-  const platform = Math.max(0, p.total - p.price - p.ambulanceFee);
+  const facilityShare = Math.max(0, p.total - p.ambulanceFee);
   const splits: SettlementSplit[] = [
-    { party: 'receiving_facility', facilityCode: c.acceptedBy ?? undefined, amount: p.price, status: 'held' },
+    { party: 'receiving_facility', facilityCode: c.acceptedBy ?? undefined, amount: facilityShare, status: 'held' },
   ];
   if (p.ambulanceFee > 0) splits.push({ party: 'transport', amount: p.ambulanceFee, status: 'held' });
-  if (platform > 0) splits.push({ party: 'platform', amount: platform, status: 'held' });
   return splits;
 }

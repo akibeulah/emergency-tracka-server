@@ -1,4 +1,6 @@
-import { Controller, Get, Module, Query, UseGuards } from '@nestjs/common';
+import { Body, Controller, Get, Module, Param, Patch, Query, UseGuards } from '@nestjs/common';
+import { IsIn } from 'class-validator';
+import { AuthUser, CurrentUser } from '../../common/decorators/current-user.decorator';
 import { MongooseModule } from '@nestjs/mongoose';
 import { RequirePermissions } from '../../common/decorators/permissions.decorator';
 import { AuditService } from '../audit/audit.service';
@@ -28,9 +30,31 @@ export class AdminController {
   }
 }
 
+class AlertStatusDto {
+  @IsIn(['open', 'reviewing', 'resolved'])
+  status: 'open' | 'reviewing' | 'resolved';
+}
+
+/** A facility's own alerts: beds reaching their threshold or running out. */
+@Controller('facilities/me/alerts')
+@UseGuards(JwtAuthGuard, PermissionsGuard)
+export class FacilityAlertsController {
+  constructor(private readonly alerts: AlertsService) {}
+
+  @Get()
+  list(@CurrentUser() user: AuthUser, @Query('status') status?: string) {
+    return this.alerts.listForFacility(user.facilityCode, status);
+  }
+
+  @Patch(':id')
+  setStatus(@CurrentUser() user: AuthUser, @Param('id') id: string, @Body() dto: AlertStatusDto) {
+    return this.alerts.setFacilityAlertStatus(user.facilityCode, id, dto.status);
+  }
+}
+
 @Module({
   imports: [MongooseModule.forFeature([{ name: Alert.name, schema: AlertSchema }])],
-  controllers: [AdminController],
+  controllers: [AdminController, FacilityAlertsController],
   providers: [AlertsService],
   exports: [AlertsService],
 })

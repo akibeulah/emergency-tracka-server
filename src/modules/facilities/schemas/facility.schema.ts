@@ -13,6 +13,27 @@ export type OxygenState = (typeof OXYGEN_STATES)[number];
 export const SPECIALIST_AVAILABILITY = ['on_site', 'on_call', 'unavailable'] as const;
 export type SpecialistAvailability = (typeof SPECIALIST_AVAILABILITY)[number];
 
+/** Referral pathway level: PHCs refer up to secondary, secondary up to tertiary. */
+export const CARE_LEVELS = ['primary', 'secondary', 'tertiary'] as const;
+export type CareLevel = (typeof CARE_LEVELS)[number];
+export const CARE_LEVEL_RANK: Record<CareLevel, number> = { primary: 1, secondary: 2, tertiary: 3 };
+
+/** Subscriptions are the revenue model (1 Nov 2026). No commission on care payments. */
+export const FACILITY_PLANS = ['free', 'subscribed'] as const;
+export type FacilityPlan = (typeof FACILITY_PLANS)[number];
+
+export interface FacilityContact {
+  name?: string;
+  phone?: string;
+  email?: string;
+}
+
+/** Opt-outs. A facility that turns one off is left out of matching or ambulance broadcasts. */
+export interface FacilitySettings {
+  acceptReferrals: boolean;
+  acceptAmbulanceRequests: boolean;
+}
+
 export interface ClaimApproval {
   adminId: Types.ObjectId;
   at: Date;
@@ -114,6 +135,24 @@ export class Facility {
   /** Duty line for tap-to-call when a referral stalls (4-8, 12-2). */
   @Prop()
   dutyPhone?: string;
+
+  @Prop({ type: String, enum: CARE_LEVELS })
+  level?: CareLevel;
+
+  @Prop({ type: Object, default: () => ({ acceptReferrals: true, acceptAmbulanceRequests: true }) })
+  settings: FacilitySettings;
+
+  /** One IT contact and one nursing contact per facility. */
+  @Prop({ type: Object, default: {} })
+  contacts: { it?: FacilityContact; nursing?: FacilityContact };
+
+  /** The most ambulances this facility may register. 0 = none. */
+  @Prop({ type: Object, default: () => ({ maxAmbulances: 0 }) })
+  fleet: { maxAmbulances: number };
+
+  /** Free tier for PHCs and facilities testing the platform; set by a platform admin. */
+  @Prop({ type: Object, default: () => ({ tier: 'free' }) })
+  plan: { tier: FacilityPlan; updatedAt?: Date; note?: string };
 
   createdAt?: Date;
   updatedAt?: Date;

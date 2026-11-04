@@ -3,7 +3,7 @@ import { AuthUser, CurrentUser } from '../../common/decorators/current-user.deco
 import { RequirePermissions } from '../../common/decorators/permissions.decorator';
 import { JwtAuthGuard } from '../auth/guards/jwt-auth.guard';
 import { PermissionsGuard } from '../auth/guards/permissions.guard';
-import { InviteStaffDto, SetPermissionsDto, SetRosterDto, SetStatusDto } from './dto/users.dto';
+import { InviteStaffDto, SetPermissionsDto, SetRosterDto, SetStatusDto, UpdateOwnProfileDto, UpdateStaffDto } from './dto/users.dto';
 import { UsersService } from './users.service';
 
 /** Staff and roster of the caller's own facility. */
@@ -29,6 +29,18 @@ export class UsersController {
   @RequirePermissions('staff.manage')
   invite(@CurrentUser() user: AuthUser, @Body() dto: InviteStaffDto) {
     return this.users.invite(user.facilityCode, dto);
+  }
+
+  @Patch('staff/:id')
+  @RequirePermissions('staff.manage')
+  update(@CurrentUser() user: AuthUser, @Param('id') id: string, @Body() dto: UpdateStaffDto) {
+    return this.users.updateStaff(user.facilityCode, id, dto);
+  }
+
+  /** The signed-in person's own name and MDCN number. */
+  @Patch('me/profile')
+  updateOwn(@CurrentUser() user: AuthUser, @Body() dto: UpdateOwnProfileDto) {
+    return this.users.updateStaff(user.facilityCode, user.userId, dto);
   }
 
   @Patch('staff/:id/permissions')
