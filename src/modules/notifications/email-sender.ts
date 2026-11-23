@@ -41,7 +41,38 @@ export class SmtpEmailSender implements EmailSender {
   }
 }
 
-/** SMTP when SMTP_HOST is set, the console otherwise. */
+/**
+ * Hands mail to our relay (mail-relay/) over HTTPS. The relay queues it and answers
+ * 202 at once, then sends it over SMTP with retries. Used where the host blocks
+ * outbound SMTP (Railway below the Pro plan).
+ */
+export class RelayEmailSender implements EmailSender {
+  private readonly url: string;
+  private readonly apiKey: string;
+  private readonly fromName: string;
+
+  constructor(config: ConfigService<Env, true>) {
+    this.url = `${config.get('MAIL_RELAY_URL', { infer: true }).replace(/\/+$/, '')}/send`;
+    this.apiKey = config.get('MAIL_RELAY_API_KEY', { infer: true });
+    this.fromName = config.get('MAIL_FROM_NAME', { infer: true });
+  }
+
+  async send(to: string, subject: string, text: string): Promise<void> {
+    const res = await fetch(this.url, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${this.apiKey}` },
+      body: JSON.stringify({ to, subject, text, ...(this.fromName && { fromName: this.fromName }) }),
+      signal: AbortSignal.timeout(10_000),
+    });
+    if (res.status !== 202) {
+      const detail = (await res.text().catch(() => '')).slice(0, 200);
+      throw new Error(`mail relay answered ${res.status}${detail ? `: ${detail}` : ''}`);
+    }
+  }
+}
+
+/** The relay when MAIL_RELAY_URL is set, else SMTP when SMTP_HOST is set, else the console. */
 export function emailSenderFactory(config: ConfigService<Env, true>): EmailSender {
+  if (config.get('MAIL_RELAY_URL', { infer: true })) return new RelayEmailSender(config);
   return config.get('SMTP_HOST', { infer: true }) ? new SmtpEmailSender(config) : new ConsoleEmailSender();
 }

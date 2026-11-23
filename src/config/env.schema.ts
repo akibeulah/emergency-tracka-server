@@ -48,6 +48,11 @@ export const envSchema = Joi.object({
   SMTP_USER: Joi.string().allow('').default(''),
   SMTP_PASSWORD: Joi.string().allow('').default(''),
   SMTP_FROM: Joi.string().allow('').default(''),
+  // Mail relay on our VPS (mail-relay/). Takes priority over SMTP when set, for hosts
+  // that block outbound SMTP. The relay fixes the sending address; we set the name.
+  MAIL_RELAY_URL: Joi.string().uri({ scheme: ['http', 'https'] }).allow('').default(''),
+  MAIL_RELAY_API_KEY: Joi.string().allow('').default('').when('MAIL_RELAY_URL', { is: Joi.string().min(1), then: Joi.string().min(32).required() }),
+  MAIL_FROM_NAME: Joi.string().allow('').default(''),
 });
 
 export interface Env {
@@ -79,4 +84,7 @@ export interface Env {
   SMTP_USER: string;
   SMTP_PASSWORD: string;
   SMTP_FROM: string;
+  MAIL_RELAY_URL: string;
+  MAIL_RELAY_API_KEY: string;
+  MAIL_FROM_NAME: string;
 }
